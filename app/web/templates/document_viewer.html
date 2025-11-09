@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+ 
+{% block title %}{{ doc_name }}{% endblock %}
+ 
+{% block content %}
+<section class="viewer" dir="{{ text_direction }}">
+  <div class="viewer-header">
+    <h2>{{ doc_name }}</h2>
+    <a class="viewer-download" href="{{ download_url }}" target="_blank" rel="noopener">
+      {{ ui.download_original }}
+    </a>
+  </div>
+  <!-- Data payload for JS (avoids inline template syntax inside JS) -->
+  <div id="viewerData"
+       hidden
+       data-copied="{{ ui.copy_success }}"
+       data-failed="{{ ui.copy_failure }}"
+       data-page="{{ initial_page or '' }}"
+       data-zoom="{{ initial_zoom or '' }}"
+       data-search="{{ initial_search or '' }}">
+  </div>
+ 
+  <div class="viewer-frame-wrapper">
+    <div class="viewer-loading" id="pdfLoadingState" role="status" aria-live="polite">
+      <span class="viewer-loading-spinner" aria-hidden="true"></span>
+      <span>{{ ui.loading_message }}</span>
+    </div>
+    <iframe
+      id="pdfViewerFrame"
+      class="viewer-frame"
+      src="{{ viewer_src }}"
+      title="PDF preview of {{ doc_name }}"
+      allowfullscreen
+    ></iframe>
+  </div>
+  <div class="viewer-actions">
+    <button id="copyPageLink" class="secondary-button" type="button">
+      {{ ui.copy_link }}
+    </button>
+    <span id="copyStatus" class="copy-status" aria-live="polite"></span>
+  </div>
+</section>
+{% endblock %}
+ 
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const iframe = document.getElementById("pdfViewerFrame");
+      const loadingOverlay = document.getElementById("pdfLoadingState");
+      const copyButton = document.getElementById("copyPageLink");
+      const statusEl = document.getElementById("copyStatus");
+      const dataEl = document.getElementById("viewerData");
+      const messages = {
+        copied: dataEl?.dataset?.copied || "",
+        failed: dataEl?.dataset?.failed || "",
+      };
+ 
+      const initialState = {
+        page: dataEl?.dataset?.page || "",
+        zoom: dataEl?.dataset?.zoom || "",
+        search: dataEl?.dataset?.search || "",
+      };
+ 
+      let lastKnownPage = initialState.page ? parseInt(initialState.page, 10) : null;
+      if (copyButton) {
+        copyButton.dataset.link = window.location.href;
+      }
+ 
+      function notifyStatus(message) {
+        if (!statusEl) {
+          return;
+        }
+        statusEl.textContent = message;
+        clearTimeout(notifyStatus._timer);
+        notifyStatus._timer = setTimeout(() => {
+          statusEl.textContent = "";
+        }, 3000);
+      }
+ 
+      function updateShareLink(pageNumber) {
+        if (!copyButton) {
+          return;
+        }
+        if (typeof pageNumber === "number" && !Number.isNaN(pageNumber)) {
+          lastKnownPage = pageNumber;
+        }
+        const effectivePage = lastKnownPage;
+        const url = new URL(window.location.href);
+        if (effectivePage) {
+          url.searchParams.set("page", String(effectivePage));
+        }
+        if (initialState.zoom) {
+          url.searchParams.set("zoom", initialState.zoom);
+        } else {
+          url.searchParams.delete("zoom");
+        }
+        if (initialState.search) {
+          url.searchParams.set("search", initialState.search);
+        } else {
+          url.searchParams.delete("search");
+        }
+        window.history.replaceState(null, "", url.toString());
+        copyButton.dataset.link = url.toString();
+      }
+ 
+      async function handleCopy() {
+        if (!copyButton) {
+          return;
+        }
+        const link = copyButton.dataset.link || window.location.href;
+        try {
+          await navigator.clipboard.writeText(link);
+          notifyStatus(messages.copied);
+        } catch (err) {
+          notifyStatus(messages.failed);
+        }
+      }
+ 
+      function applyInitialState(app) {
+        if (initialState.page) {
+          const pageNumber = parseInt(initialState.page, 10);
+          if (!Number.isNaN(pageNumber)) {
+            app.page = pageNumber;
+          }
+        }
+        if (initialState.zoom) {
+          app.pdfViewer.currentScaleValue = initialState.zoom;
+        }
+        if (initialState.search) {
+          try {
+            app.findController?.executeCommand?.("find", {
+              query: initialState.search,
+              highlightAll: true,
+              caseSensitive: false,
+              entireWord: false,
+              phraseSearch: true,
+            });
+          } catch (err) {
+            console.warn("Search initialization failed", err);
+          }
+        }
+      }
+ 
+      function setupViewer(app) {
+        if (loadingOverlay) {
+          loadingOverlay.hidden = true;
+        }
+        const eventBus = app.eventBus;
+        eventBus.on("pagechanging", ({ pageNumber }) => {
+          updateShareLink(pageNumber);
+        });
+        eventBus.on("pagesloaded", () => {
+          if (loadingOverlay) {
+            loadingOverlay.hidden = true;
+          }
+        });
+        applyInitialState(app);
+        updateShareLink(app.page);
+      }
+ 
+      function waitForViewerReady() {
+        if (!iframe?.contentWindow) {
+          return;
+        }
+        const win = iframe.contentWindow;
+        const attemptInit = () => {
+          const app = win.PDFViewerApplication;
+          if (app && app.initialized && app.eventBus) {
+            setupViewer(app);
+          } else {
+            win.setTimeout(attemptInit, 75);
+          }
+        };
+        attemptInit();
+      }
+ 
+      iframe?.addEventListener("load", waitForViewerReady);
+      copyButton?.addEventListener("click", handleCopy);
+    })();
+  </script>
+{% endblock %}
