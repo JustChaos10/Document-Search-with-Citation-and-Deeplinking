@@ -227,7 +227,11 @@ SEARCH/
 
 For questions or issues, check the logs in `logs/app.log`.
 
-.env.example
+## Environment Variables Example
+
+Create a `.env` file in the project root with the following configuration:
+
+```env
 GEMINI_API_KEY=
 GEMINI_MODEL_NAME=gemini-2.5-flash
 VECTOR_STORE_BACKEND=auto
@@ -249,3 +253,4 @@ BM25_INDEX_PATH=storage/bm25_index.json
 RERANKER_MODEL_NAME=BAAI/bge-reranker-large
 RERANKER_DEVICE=auto
 RERANKER_CANDIDATE_LIMIT=18
+```
