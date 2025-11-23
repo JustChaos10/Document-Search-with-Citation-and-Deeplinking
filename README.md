@@ -12,13 +12,23 @@ An AI-powered document search and question-answering system that lets you ask qu
 
 ## Technology Stack
 
-- **Backend Framework**: Flask (Python web framework)
-- **AI Model**: Google Gemini (for generating answers)
-- **Vector Search**: FAISS or ChromaDB (semantic similarity search)
-- **Keyword Search**: BM25 (traditional keyword matching)
-- **Reranking**: Cross-encoder models (BAAI/bge-reranker-large)
-- **Embeddings**: Multilingual sentence transformers (paraphrase-multilingual-MiniLM-L12-v2)
+### Core AI/ML Components
+- **AI Model**: Google Gemini 2.0 Flash (answer generation)
+- **Embeddings**: BAAI/bge-m3 (1024-dim multilingual, state-of-the-art)
+- **Reranking**: BAAI/bge-reranker-large (cross-encoder)
+- **Query Expansion**: LLM-based query rewriting for better retrieval
 - **Speech-to-Text**: OpenAI Whisper (for voice queries)
+
+### Retrieval Pipeline (Advanced RAG)
+- **Hybrid Search**: Vector search (FAISS/ChromaDB) + BM25 keyword search
+- **Token-Based Chunking**: tiktoken for accurate LLM context limits (500 tokens/chunk)
+- **Semantic Chunking**: Embedding-based similarity to find natural document boundaries
+- **Parent Document Retrieval**: Stores broader context (2000 tokens) for better answers
+- **Multi-Stage Retrieval**: Retrieve → Deduplicate → Language Filter → Rerank
+
+### Infrastructure
+- **Backend Framework**: Flask (Python web framework)
+- **Vector Stores**: FAISS (primary) or ChromaDB (fallback)
 - **Document Processing**: pypdf, BeautifulSoup, python-docx
 - **Frontend**: HTML, CSS, JavaScript with PDF.js viewer
 
@@ -131,6 +141,26 @@ Visit `http://localhost:8000` in your web browser and start asking questions!
 
 ## Features
 
+### Advanced RAG Capabilities 🚀
+- **Token-Based Chunking**: Uses tiktoken for precise token counting, ensuring chunks fit LLM context limits
+  - English: 500 tokens/chunk with 100 token overlap
+  - Arabic: 600 tokens/chunk with 120 token overlap (accounting for language differences)
+- **Semantic Chunking**: Analyzes embedding similarity between sentences to split at natural topic boundaries
+  - Prevents splitting related content across chunks
+  - Maintains semantic coherence within each chunk
+- **Parent Document Retrieval**: Stores 2000-token context windows around each chunk
+  - Provides broader context to the LLM for better answers
+  - Reduces information loss from aggressive chunking
+- **LLM-Based Query Expansion**: Uses Gemini to generate 2-3 alternative query phrasings
+  - Handles synonyms, related concepts, and different perspectives
+  - Works in both English and Arabic
+- **Multi-Stage Retrieval Pipeline**:
+  1. Retrieve 3× candidates from both vector and keyword indexes
+  2. Deduplicate by chunk ID
+  3. Filter by detected language
+  4. Rerank using cross-encoder (BAAI/bge-reranker-large)
+  5. Return top-K results
+
 ### Document Support
 - **PDF**: Text extraction with layout preservation
 - **HTML**: Extracts content and sections from web pages
@@ -139,6 +169,7 @@ Visit `http://localhost:8000` in your web browser and start asking questions!
 
 ### Search Capabilities
 - **Hybrid Retrieval**: Combines vector similarity search (semantic) with BM25 keyword search
+- **State-of-the-Art Embeddings**: BAAI/bge-m3 (1024 dimensions, supports 100+ languages)
 - **Reranking**: Uses cross-encoder models to improve result quality
 - **Multilingual**: Supports English and Arabic with automatic language detection
 - **Voice Search**: Speak your questions using the microphone button
@@ -232,25 +263,41 @@ For questions or issues, check the logs in `logs/app.log`.
 Create a `.env` file in the project root with the following configuration:
 
 ```env
-GEMINI_API_KEY=
-GEMINI_MODEL_NAME=gemini-2.5-flash
-VECTOR_STORE_BACKEND=auto
+# Required: Your Google Gemini API key
+GEMINI_API_KEY=your_api_key_here
+
+# LLM Configuration
+GEMINI_MODEL_NAME=gemini-2.0-flash
+
+# Embedding Model (State-of-the-art multilingual)
+EMBEDDING_MODEL_NAME=BAAI/bge-m3
+EMBEDDING_CACHE_DIR=storage/models
+EMBEDDING_MODEL_PATH=
+
+# Vector Store
+VECTOR_STORE_BACKEND=auto  # Options: auto, faiss, chroma
 VECTOR_STORE_PATH=storage/vector_store
+
+# Legacy chunking (fallback only - token-based is now default)
 CHUNK_SIZE=800
 CHUNK_OVERLAP=200
-# Arabic-specific chunking (50% larger for semantic equivalence)
 CHUNK_SIZE_AR=1200
 CHUNK_OVERLAP_AR=300
-LOG_FILE=logs/app.log
-ENVIRONMENT=development
-EMBEDDING_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-EMBEDDING_CACHE_DIR=storage/models
-WHISPER_MODEL_NAME=medium
-WHISPER_DEVICE=auto
-EMBEDDING_MODEL_PATH=
+
+# Hybrid Retrieval (Vector + BM25)
 ENABLE_HYBRID_RETRIEVAL=true
 BM25_INDEX_PATH=storage/bm25_index.json
+
+# Reranker Configuration
 RERANKER_MODEL_NAME=BAAI/bge-reranker-large
-RERANKER_DEVICE=auto
+RERANKER_DEVICE=auto  # Options: auto, cuda, mps, cpu
 RERANKER_CANDIDATE_LIMIT=18
+
+# Speech-to-Text (Whisper)
+WHISPER_MODEL_NAME=medium
+WHISPER_DEVICE=auto
+
+# Logging
+LOG_FILE=logs/app.log
+ENVIRONMENT=development
 ```

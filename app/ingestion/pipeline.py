@@ -35,19 +35,27 @@ class IngestionPipeline:
             logger.warning("whisper.unavailable", extra={"error": str(exc)})
             self.stt_service = None
         self.extractor = DocumentExtractor(stt_service=self.stt_service)
+
+        # Initialize embeddings first so chunker can use them for semantic chunking
+        embeddings = resolve_embeddings(
+            config.embedding_model_name,
+            config.gemini_api_key,
+            cache_dir=config.embedding_cache_dir,
+            model_path=config.embedding_model_path,
+        )
+
+        # Create chunker with embeddings for semantic chunking
         self.chunker = DocumentChunker(
             ChunkerConfig(
                 chunk_size=config.chunk_size,
                 chunk_overlap=config.chunk_overlap,
                 chunk_size_ar=config.chunk_size_ar,
                 chunk_overlap_ar=config.chunk_overlap_ar,
-            )
-        )
-        embeddings = resolve_embeddings(
-            config.embedding_model_name,
-            config.gemini_api_key,
-            cache_dir=config.embedding_cache_dir,
-            model_path=config.embedding_model_path,
+                use_token_based=True,
+                use_semantic_chunking=True,
+                create_parent_chunks=True,
+            ),
+            embeddings=embeddings
         )
         self.vector_store = VectorStoreManager(
             embeddings=embeddings,

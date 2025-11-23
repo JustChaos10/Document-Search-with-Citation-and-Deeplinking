@@ -21,7 +21,7 @@ class AppConfig:
     chunk_overlap_ar: int
     gemini_api_key: str
     gemini_model_name: str
-    embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model_name: str = "BAAI/bge-m3"
     embedding_model_path: Path | None = None
     embedding_cache_dir: Path | None = None
     whisper_model_name: str = "medium"
@@ -68,7 +68,7 @@ class AppConfig:
 
         gemini_model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
         embedding_model_name = os.getenv(
-            "EMBEDDING_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            "EMBEDDING_MODEL_NAME", "BAAI/bge-m3"
         )
         whisper_model_name = os.getenv("WHISPER_MODEL_NAME", "medium")
         whisper_device = os.getenv("WHISPER_DEVICE", "auto").lower()

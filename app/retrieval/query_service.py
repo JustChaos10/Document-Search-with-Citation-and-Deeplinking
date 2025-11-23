@@ -244,8 +244,18 @@ class QueryService:
                 context_lines.append(f"section: {section_label}")
             if effective_date:
                 context_lines.append(f"effective_date: {effective_date}")
-            context_lines.append("content:")
-            context_lines.append(doc.page_content)
+
+            # Use parent window for broader context if available (parent document retrieval)
+            parent_window = metadata.get("parent_window")
+            if parent_window and parent_window != doc.page_content:
+                context_lines.append("broader_context:")
+                context_lines.append(parent_window)
+                context_lines.append("\nfocused_content:")
+                context_lines.append(doc.page_content)
+            else:
+                context_lines.append("content:")
+                context_lines.append(doc.page_content)
+
             context_blocks.append("\n".join(context_lines) + "\n")
 
         instructions = (
@@ -667,16 +677,78 @@ class QueryService:
         return 1.0 / (1.0 + math.exp(-0.5 * value))
 
     def _expand_queries(self, question: str) -> List[str]:
+        """Expand query using LLM-based rewriting for better retrieval."""
         queries = [question]
+
+        # Try LLM-based query expansion first
+        llm_queries = self._llm_query_expansion(question)
+        queries.extend(llm_queries)
+
+        # Fallback: Simple keyword extraction
         simplified = re.sub(r"[^a-zA-Z0-9\s]", " ", question).lower()
         tokens = [token for token in simplified.split() if len(token) > 3]
         if tokens:
             keyword_query = " ".join(tokens)
             if keyword_query not in queries:
                 queries.append(keyword_query)
-        if "medqa" in simplified and "gemini" in simplified:
-            queries.append("MedQA USMLE accuracy Med-Gemini strategy")
+
         return queries
+
+    def _llm_query_expansion(self, question: str) -> List[str]:
+        """Use LLM to generate alternative query phrasings for better retrieval."""
+        # Detect query language
+        query_lang = (detect_language(question) or "en").lower()
+        if query_lang not in {"en", "ar"}:
+            query_lang = "en"
+
+        prompt = (
+            "You are a search query expert. Generate 2-3 alternative search queries that would help find relevant documents.\n\n"
+            "RULES:\n"
+            f"1. Write ALL queries in {'Arabic' if query_lang == 'ar' else 'English'}\n"
+            "2. Return ONLY a JSON array of strings, no other text\n"
+            "3. Focus on: synonyms, related concepts, and different phrasings\n"
+            "4. Keep queries concise (max 15 words each)\n"
+            "5. Include both broad and specific variants\n\n"
+            f"Original query: {question}\n\n"
+            'Return format: ["query1", "query2", "query3"]'
+        )
+
+        try:
+            # Use a simpler model for fast query expansion
+            expansion_model = ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash-lite" if hasattr(self.chat_model, "model") else "gemini-2.0-flash",
+                google_api_key=self.config.gemini_api_key,
+                temperature=0.3,
+                max_output_tokens=256,
+                response_mime_type="application/json",
+            )
+
+            response = expansion_model.invoke(prompt)
+            text = self._extract_message_text(response)
+
+            if text:
+                try:
+                    expanded_queries = json.loads(text)
+                    if isinstance(expanded_queries, list):
+                        # Filter and validate queries
+                        valid_queries = []
+                        for q in expanded_queries:
+                            if isinstance(q, str) and q.strip() and q.strip() != question:
+                                valid_queries.append(q.strip())
+
+                        logger.info(
+                            "query.expansion_success",
+                            extra={"original": question, "expanded_count": len(valid_queries)}
+                        )
+                        return valid_queries[:3]  # Limit to 3 variants
+                except json.JSONDecodeError:
+                    logger.debug("query.expansion_parse_failed", extra={"text": text[:200]})
+
+        except Exception as exc:
+            logger.debug("query.expansion_failed", extra={"error": str(exc)})
+
+        # Return empty list if expansion fails - fallback will be used
+        return []
 
     def _build_search_variants(
         self, queries: Sequence[str], query_language: str
