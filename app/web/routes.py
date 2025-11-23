@@ -6,9 +6,10 @@ from pathlib import Path
 import re
 import textwrap
 import tempfile
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
- 
+
+import bleach
 from flask import (
     Blueprint,
     abort,
@@ -23,7 +24,12 @@ from flask import (
 from app.nlp import detect_language
 from app.audio import SpeechToTextService
 from app.retrieval.embeddings import resolve_embeddings
-from app.retrieval.query_service import QueryService
+from app.retrieval.query_service import (
+    QueryService,
+    NoDocumentsError,
+    APIRateLimitError,
+    APIConnectionError,
+)
 from app.retrieval.vector_store import VectorStoreManager
 from app.retrieval.keyword_store import KeywordIndex
 from app.retrieval.reranker import build_reranker
@@ -39,6 +45,8 @@ _SNIPPET_LEADING_PATTERN = re.compile(r"^(this\s+(?:part|chunk))[:\s\-]*", re.IG
 _SUPPORTED_LANGUAGES = {"en", "ar"}
 _ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".mp3", ".wav", ".m4a", ".mp4", ".flac"}
 _ARABIC_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+_MAX_QUERY_LENGTH = 2000  # Maximum allowed query length
+_MIN_QUERY_LENGTH = 2  # Minimum meaningful query length
  
  
 def _normalize_language(value: str | None) -> str:
@@ -63,6 +71,48 @@ def _contains_arabic(text: str | None) -> bool:
     return bool(_ARABIC_CHAR_PATTERN.search(text))
 
 
+def _sanitize_query(query: str) -> str:
+    """
+    Sanitize user query to prevent XSS and injection attacks.
+    Returns cleaned query string.
+    """
+    if not query:
+        return ""
+
+    # Remove any HTML tags and strip whitespace
+    cleaned = bleach.clean(query, tags=[], strip=True).strip()
+
+    # Normalize whitespace
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    return cleaned
+
+
+def _validate_query(query: str) -> Tuple[bool, Optional[str]]:
+    """
+    Validate user query length and content.
+    Returns (is_valid, error_message_key).
+    """
+    if not query or not query.strip():
+        return True, None  # Empty queries are allowed (show homepage)
+
+    query_length = len(query)
+
+    # Check minimum length
+    if query_length < _MIN_QUERY_LENGTH:
+        return False, "query_too_short"
+
+    # Check maximum length
+    if query_length > _MAX_QUERY_LENGTH:
+        return False, "query_too_long"
+
+    # Check for suspicious patterns (repeated characters suggesting spam/DoS)
+    if re.search(r"(.)\1{50,}", query):
+        return False, "query_invalid"
+
+    return True, None
+
+
 def _ui_strings(language: str) -> Dict[str, str]:
     lang = _normalize_language(language)
     if lang == "ar":
@@ -76,6 +126,12 @@ def _ui_strings(language: str) -> Dict[str, str]:
             "download_label": "تحميل ملف PDF",
             "download_original": "تحميل النسخة الأصلية",
             "error_generic": "حدث خطأ أثناء معالجة سؤالك.",
+            "error_rate_limit": "لقد تجاوزت حد الطلبات. يرجى المحاولة مرة أخرى بعد بضع ثوانٍ.",
+            "error_api": "فشل الاتصال بخدمة الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.",
+            "error_no_documents": "لم يتم العثور على مستندات في قاعدة المعرفة. يرجى تحميل المستندات أولاً.",
+            "query_too_short": "سؤالك قصير جداً. يرجى إدخال سؤال أطول.",
+            "query_too_long": "سؤالك طويل جداً. الحد الأقصى هو 2000 حرف.",
+            "query_invalid": "سؤالك يحتوي على أحرف غير صالحة. يرجى إعادة صياغته.",
             "no_results": "لم يتم العثور على نتائج. حاول تحسين سؤالك.",
             "loading_message": "جاري تحميل المستند...",
             "copy_link": "انسخ الرابط إلى هذه الصفحة",
@@ -92,6 +148,12 @@ def _ui_strings(language: str) -> Dict[str, str]:
         "download_label": "Download PDF",
         "download_original": "Download original",
         "error_generic": "Something went wrong while processing your question.",
+        "error_rate_limit": "Rate limit exceeded. Please wait a few seconds and try again.",
+        "error_api": "Failed to connect to AI service. Please try again later.",
+        "error_no_documents": "No documents found in the knowledge base. Please upload documents first.",
+        "query_too_short": "Your query is too short. Please enter a longer question.",
+        "query_too_long": "Your query is too long. Maximum length is 2000 characters.",
+        "query_invalid": "Your query contains invalid characters. Please rephrase it.",
         "no_results": "No results found. Try refining your question.",
         "loading_message": "Loading document.",
         "copy_link": "Copy link to this page",
@@ -151,14 +213,18 @@ def _get_stt_service() -> SpeechToTextService | None:
 @web_bp.route("/", methods=["GET"])
 def index():
     config = current_app.config["APP_CONFIG"]
-    query = request.args.get("q", "").strip()
+    raw_query = request.args.get("q", "")
     answer = ""
     cards: List[Dict] = []
     error_message = ""
     requested_language = request.args.get("lang")
     query_language = _normalize_language(requested_language)
+
+    # Sanitize query to prevent XSS
+    query = _sanitize_query(raw_query).strip()
     query_has_arabic = _contains_arabic(query)
 
+    # Detect language from query if not explicitly set
     if requested_language is None:
         if query_has_arabic:
             query_language = "ar"
@@ -170,25 +236,85 @@ def index():
                     query_language = "ar"
                 elif query_language != "ar":
                     query_language = normalized_detected
-    if query:
-        try:
-            service = _get_query_service()
-            result = service.query(query)
-            result_language = getattr(result, "language", None)
-            if result_language:
-                normalized_result_language = _normalize_language(result_language)
-                if normalized_result_language == "ar":
-                    query_language = "ar"
-                elif query_language != "ar":
-                    query_language = normalized_result_language
-            answer = result.answer
-            ui_for_cards = _ui_strings(query_language)
-            cards = _build_cards(result.context_map, result.citations, query_language, ui_for_cards)
-        except Exception as exc:  # pragma: no cover - user feedback
-            logger.exception("query.failed", extra={"query": query})
-            error_message = _ui_strings(query_language)["error_generic"]
 
+    # Get UI strings for the detected/selected language
     ui_strings = _ui_strings(query_language)
+
+    # Validate query if present
+    if query:
+        is_valid, validation_error = _validate_query(query)
+        if not is_valid:
+            error_message = ui_strings.get(validation_error, ui_strings["query_invalid"])
+        else:
+            # Process the query
+            try:
+                service = _get_query_service()
+                result = service.query(query)
+
+                # Update language based on result if available
+                result_language = getattr(result, "language", None)
+                if result_language:
+                    normalized_result_language = _normalize_language(result_language)
+                    if normalized_result_language == "ar":
+                        query_language = "ar"
+                    elif query_language != "ar":
+                        query_language = normalized_result_language
+                    ui_strings = _ui_strings(query_language)
+
+                answer = result.answer
+                cards = _build_cards(result.context_map, result.citations, query_language, ui_strings)
+
+            except NoDocumentsError as exc:
+                # No documents in vector store
+                logger.warning("query.no_documents_error", extra={"error": str(exc), "query": query})
+                error_message = ui_strings["error_no_documents"]
+
+            except APIRateLimitError as exc:
+                # Rate limit exceeded
+                logger.warning("query.rate_limit_error", extra={"error": str(exc), "query": query})
+                error_message = ui_strings["error_rate_limit"]
+
+            except APIConnectionError as exc:
+                # API connection failed
+                logger.error("query.api_connection_error", extra={"error": str(exc), "query": query})
+                error_message = ui_strings["error_api"]
+
+            except ImportError as exc:
+                # Missing dependencies or model loading errors
+                logger.error("query.dependency_error", extra={"error": str(exc), "query": query})
+                error_message = ui_strings["error_api"]
+
+            except ValueError as exc:
+                # Empty query or invalid input
+                error_str = str(exc).lower()
+                if "empty" in error_str or "cannot be empty" in error_str:
+                    logger.warning("query.empty_value", extra={"error": str(exc)})
+                    error_message = ui_strings["query_too_short"]
+                else:
+                    logger.error("query.value_error", extra={"error": str(exc), "query": query})
+                    error_message = ui_strings["error_generic"]
+
+            except ConnectionError as exc:
+                # Network or connection errors (fallback for non-API connection errors)
+                logger.error("query.connection_error", extra={"error": str(exc), "query": query})
+                error_message = ui_strings["error_api"]
+
+            except Exception as exc:
+                # Catch-all for unexpected errors
+                error_str = str(exc).lower()
+
+                # Double-check for rate limits (in case not caught by custom exception)
+                if "rate" in error_str and "limit" in error_str:
+                    logger.warning("query.rate_limit_generic", extra={"error": str(exc), "query": query})
+                    error_message = ui_strings["error_rate_limit"]
+                elif "429" in error_str or "quota" in error_str:
+                    logger.warning("query.rate_limit_429_generic", extra={"error": str(exc), "query": query})
+                    error_message = ui_strings["error_rate_limit"]
+                else:
+                    # Generic error for all other cases
+                    logger.exception("query.failed", extra={"query": query})
+                    error_message = ui_strings["error_generic"]
+
     text_direction = _text_direction(query_language)
 
     return render_template(

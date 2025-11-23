@@ -8,6 +8,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 from collections.abc import Iterable
 from datetime import datetime
+from http.client import RemoteDisconnected
 
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
@@ -19,6 +20,27 @@ from app.retrieval.keyword_store import KeywordIndex
 from app.retrieval.reranker import CrossEncoderReranker, RerankedDocument
 
 logger = logging.getLogger(__name__)
+
+
+# Custom exceptions for better error handling
+class QueryServiceError(Exception):
+    """Base exception for QueryService errors."""
+    pass
+
+
+class NoDocumentsError(QueryServiceError):
+    """Raised when no documents are found in the vector store."""
+    pass
+
+
+class APIRateLimitError(QueryServiceError):
+    """Raised when API rate limit is exceeded."""
+    pass
+
+
+class APIConnectionError(QueryServiceError):
+    """Raised when API connection fails."""
+    pass
 
 
 @dataclass
@@ -57,8 +79,40 @@ class QueryService:
         self.max_retries = 3
 
     def query(self, question: str, top_k: int = 6) -> QueryResult:
+        """
+        Process a user query and return an answer with citations.
+
+        Args:
+            question: The user's query
+            top_k: Number of top results to return
+
+        Returns:
+            QueryResult with answer, citations, and context
+
+        Raises:
+            ValueError: If question is empty
+            NoDocumentsError: If vector store is empty or no results found
+            APIRateLimitError: If API rate limit is exceeded
+            APIConnectionError: If API connection fails
+        """
         if not question.strip():
             raise ValueError("Question cannot be empty.")
+
+        # Validate vector store has documents
+        try:
+            # Try a quick similarity search to verify vector store is not empty
+            test_search = self.vector_store.similarity_search_with_scores("test", k=1)
+            if not test_search or len(test_search) == 0:
+                logger.warning("query.empty_vector_store")
+                raise NoDocumentsError(
+                    "No documents found in the knowledge base. Please upload documents first."
+                )
+        except Exception as exc:
+            # If it's already our custom exception, re-raise it
+            if isinstance(exc, NoDocumentsError):
+                raise
+            # Otherwise, log and continue (may be a transient error)
+            logger.debug("query.vector_store_check_failed", extra={"error": str(exc)})
 
         search_k = max(top_k * 3, top_k)
         query_language = (detect_language(question) or "en").lower()
@@ -68,7 +122,15 @@ class QueryService:
         search_variants = self._build_search_variants(expanded_queries, query_language)
         raw_documents: List[Document] = []
         for expanded_query, _lang in search_variants:
-            vector_hits = self.vector_store.similarity_search_with_scores(expanded_query, k=search_k)
+            try:
+                vector_hits = self.vector_store.similarity_search_with_scores(expanded_query, k=search_k)
+            except Exception as exc:
+                logger.warning(
+                    "query.vector_search_failed",
+                    extra={"query": expanded_query, "error": str(exc)}
+                )
+                continue  # Try next query variant
+
             for doc, score in vector_hits:
                 metadata = dict(doc.metadata)
                 if score is not None:
@@ -117,7 +179,7 @@ class QueryService:
             },
         )
 
-        # Retry logic for empty or malformed responses
+        # Retry logic for empty or malformed responses with specific error handling
         payload = None
         last_error = None
         for attempt in range(1, self.max_retries + 1):
@@ -172,12 +234,88 @@ class QueryService:
                     )
 
             except Exception as exc:
+                error_str = str(exc).lower()
+                error_type = type(exc).__name__
+
+                # Check for rate limiting errors
+                if "rate" in error_str and "limit" in error_str:
+                    logger.warning(
+                        "query.rate_limit_attempt",
+                        extra={
+                            "attempt": attempt,
+                            "error": str(exc),
+                            "question": question[:50]
+                        }
+                    )
+                    if attempt >= self.max_retries:
+                        # On final attempt, raise specific exception
+                        raise APIRateLimitError(
+                            "API rate limit exceeded. Please wait a few seconds and try again."
+                        ) from exc
+                    # Otherwise continue to next retry
+                    last_error = "Rate limit exceeded"
+                    continue
+
+                # Check for 429 status code (Too Many Requests)
+                if "429" in error_str or hasattr(exc, "status_code") and getattr(exc, "status_code") == 429:
+                    logger.warning(
+                        "query.rate_limit_429",
+                        extra={
+                            "attempt": attempt,
+                            "error": str(exc),
+                            "question": question[:50]
+                        }
+                    )
+                    if attempt >= self.max_retries:
+                        raise APIRateLimitError(
+                            "API rate limit exceeded. Please wait a few seconds and try again."
+                        ) from exc
+                    last_error = "Rate limit exceeded (429)"
+                    continue
+
+                # Check for connection errors
+                if any(keyword in error_str for keyword in ["connection", "timeout", "network", "unreachable"]):
+                    logger.warning(
+                        "query.connection_error_attempt",
+                        extra={
+                            "attempt": attempt,
+                            "error": str(exc),
+                            "error_type": error_type,
+                            "question": question[:50]
+                        }
+                    )
+                    if attempt >= self.max_retries:
+                        raise APIConnectionError(
+                            "Failed to connect to AI service. Please check your internet connection and try again."
+                        ) from exc
+                    last_error = f"Connection error: {error_type}"
+                    continue
+
+                # Check for RemoteDisconnected errors
+                if isinstance(exc, (RemoteDisconnected, ConnectionError)):
+                    logger.warning(
+                        "query.remote_disconnected",
+                        extra={
+                            "attempt": attempt,
+                            "error": str(exc),
+                            "question": question[:50]
+                        }
+                    )
+                    if attempt >= self.max_retries:
+                        raise APIConnectionError(
+                            "Connection to AI service was interrupted. Please try again."
+                        ) from exc
+                    last_error = "Remote connection lost"
+                    continue
+
+                # Generic error - log and continue with retry
                 last_error = str(exc)
                 logger.warning(
                     "query.api_error_attempt",
                     extra={
                         "attempt": attempt,
                         "error": str(exc),
+                        "error_type": error_type,
                         "question": question[:50]
                     }
                 )
@@ -693,7 +831,10 @@ class QueryService:
         return queries
 
     def _llm_query_expansion(self, question: str) -> List[str]:
-        """Use LLM to generate alternative query phrasings for better retrieval."""
+        """
+        Use LLM to generate alternative query phrasings for better retrieval.
+        Gracefully handles errors and returns empty list on failure.
+        """
         # Detect query language
         query_lang = (detect_language(question) or "en").lower()
         if query_lang not in {"en", "ar"}:
@@ -738,11 +879,29 @@ class QueryService:
                             extra={"original": question, "expanded_count": len(valid_queries)}
                         )
                         return valid_queries[:3]  # Limit to 3 variants
-                except json.JSONDecodeError:
-                    logger.debug("query.expansion_parse_failed", extra={"text": text[:200]})
+                except json.JSONDecodeError as exc:
+                    logger.debug(
+                        "query.expansion_parse_failed",
+                        extra={"text": text[:200], "error": str(exc)}
+                    )
+            else:
+                logger.debug("query.expansion_empty_response")
 
+        except APIRateLimitError:
+            # Don't log rate limits as errors for query expansion - it's optional
+            logger.info("query.expansion_rate_limited")
+        except APIConnectionError:
+            # Connection errors are expected sometimes
+            logger.info("query.expansion_connection_failed")
         except Exception as exc:
-            logger.debug("query.expansion_failed", extra={"error": str(exc)})
+            error_str = str(exc).lower()
+            # Check if it's a rate limit or connection error
+            if "rate" in error_str and "limit" in error_str:
+                logger.info("query.expansion_rate_limited", extra={"error": str(exc)})
+            elif any(keyword in error_str for keyword in ["connection", "timeout", "network"]):
+                logger.info("query.expansion_connection_error", extra={"error": str(exc)})
+            else:
+                logger.debug("query.expansion_failed", extra={"error": str(exc), "type": type(exc).__name__})
 
         # Return empty list if expansion fails - fallback will be used
         return []
