@@ -13,10 +13,10 @@ An AI-powered document search and question-answering system that lets you ask qu
 ## Technology Stack
 
 ### Core AI/ML Components
-- **AI Model**: Google Gemini 2.0 Flash (answer generation)
+- **AI Model**: Groq Cloud with Llama 3.1 70B Versatile (ultra-fast answer generation)
 - **Embeddings**: BAAI/bge-m3 (1024-dim multilingual, state-of-the-art)
 - **Reranking**: BAAI/bge-reranker-large (cross-encoder)
-- **Query Expansion**: LLM-based query rewriting for better retrieval
+- **Query Expansion**: LLM-based query rewriting with Llama 3.1 8B Instant
 - **Speech-to-Text**: OpenAI Whisper (for voice queries)
 
 ### Retrieval Pipeline (Advanced RAG)
@@ -46,7 +46,7 @@ An AI-powered document search and question-answering system that lets you ask qu
 ### Prerequisites
 
 - **Python 3.11 or higher** ([Download here](https://www.python.org/downloads/))
-- **Google Gemini API Key** ([Get one here](https://aistudio.google.com/app/apikey))
+- **Groq Cloud API Key** ([Get one FREE here](https://console.groq.com/keys))
 - **Internet connection** (for API calls and downloading models)
 
 ### Installation Steps
@@ -90,12 +90,12 @@ pip install -r requirements.txt
 Create a `.env` file in the project root with:
 
 ```env
-# Required: Your Google Gemini API key
-GEMINI_API_KEY=your_api_key_here
+# Required: Your Groq Cloud API key (get it FREE at https://console.groq.com/keys)
+GROQ_API_KEY=your_groq_api_key_here
 
 # Optional: Customize these if needed
-# GEMINI_MODEL_NAME=gemini-2.0-flash-exp
-# EMBEDDING_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+# GROQ_MODEL_NAME=llama-3.1-70b-versatile  # or mixtral-8x7b-32768, llama-3.1-8b-instant
+# EMBEDDING_MODEL_NAME=BAAI/bge-m3
 # RERANKER_MODEL_NAME=BAAI/bge-reranker-large
 ```
 
@@ -263,11 +263,12 @@ For questions or issues, check the logs in `logs/app.log`.
 Create a `.env` file in the project root with the following configuration:
 
 ```env
-# Required: Your Google Gemini API key
-GEMINI_API_KEY=your_api_key_here
+# Required: Your Groq Cloud API key (FREE at https://console.groq.com/keys)
+GROQ_API_KEY=your_groq_api_key_here
 
-# LLM Configuration
-GEMINI_MODEL_NAME=gemini-2.0-flash
+# LLM Configuration - Groq Cloud Models
+GROQ_MODEL_NAME=llama-3.1-70b-versatile  # Best for RAG quality
+# Other options: mixtral-8x7b-32768 (larger context), llama-3.1-8b-instant (fastest)
 
 # Embedding Model (State-of-the-art multilingual)
 EMBEDDING_MODEL_NAME=BAAI/bge-m3

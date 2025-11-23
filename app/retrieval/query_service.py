@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from langchain_core.documents import Document
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
 from app.config import AppConfig
 from app.retrieval.vector_store import VectorStoreManager
@@ -42,19 +42,17 @@ class QueryService:
         vector_store: VectorStoreManager,
         keyword_index: Optional[KeywordIndex] = None,
         reranker: Optional[CrossEncoderReranker] = None,
-        chat_model: Optional[ChatGoogleGenerativeAI] = None,
+        chat_model: Optional[ChatGroq] = None,
     ) -> None:
         self.config = config
         self.vector_store = vector_store
         self.keyword_index = keyword_index
         self.reranker = reranker
-        self.chat_model = chat_model or ChatGoogleGenerativeAI(
-            model=config.gemini_model_name,
-            google_api_key=config.gemini_api_key,
+        self.chat_model = chat_model or ChatGroq(
+            model=config.groq_model_name,
+            groq_api_key=config.groq_api_key,
             temperature=0.1,  # Lower temperature for more consistent JSON output
-            top_p=0.95,
-            max_output_tokens=4096,  # Increased to prevent mid-JSON truncation
-            response_mime_type="application/json",
+            max_tokens=4096,  # Increased to prevent mid-JSON truncation
         )
         self.max_retries = 3
 
@@ -714,13 +712,12 @@ class QueryService:
         )
 
         try:
-            # Use a simpler model for fast query expansion
-            expansion_model = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-lite" if hasattr(self.chat_model, "model") else "gemini-2.0-flash",
-                google_api_key=self.config.gemini_api_key,
+            # Use a fast model for query expansion (Llama 3.1 8B is very fast on Groq)
+            expansion_model = ChatGroq(
+                model="llama-3.1-8b-instant",
+                groq_api_key=self.config.groq_api_key,
                 temperature=0.3,
-                max_output_tokens=256,
-                response_mime_type="application/json",
+                max_tokens=256,
             )
 
             response = expansion_model.invoke(prompt)

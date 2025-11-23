@@ -39,7 +39,6 @@ class IngestionPipeline:
         # Initialize embeddings first so chunker can use them for semantic chunking
         embeddings = resolve_embeddings(
             config.embedding_model_name,
-            config.gemini_api_key,
             cache_dir=config.embedding_cache_dir,
             model_path=config.embedding_model_path,
         )

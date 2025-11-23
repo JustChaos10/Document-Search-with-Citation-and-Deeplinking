@@ -108,7 +108,6 @@ def _get_query_service() -> QueryService:
     config = current_app.config["APP_CONFIG"]
     embeddings = resolve_embeddings(
         config.embedding_model_name,
-        config.gemini_api_key,
         cache_dir=config.embedding_cache_dir,
         model_path=config.embedding_model_path,
     )

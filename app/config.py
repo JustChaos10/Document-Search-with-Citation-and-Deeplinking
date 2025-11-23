@@ -19,8 +19,8 @@ class AppConfig:
     chunk_overlap: int
     chunk_size_ar: int
     chunk_overlap_ar: int
-    gemini_api_key: str
-    gemini_model_name: str
+    groq_api_key: str
+    groq_model_name: str
     embedding_model_name: str = "BAAI/bge-m3"
     embedding_model_path: Path | None = None
     embedding_cache_dir: Path | None = None
@@ -62,11 +62,12 @@ class AppConfig:
         chunk_size_ar = int(os.getenv("CHUNK_SIZE_AR", "1200"))
         chunk_overlap_ar = int(os.getenv("CHUNK_OVERLAP_AR", "300"))
 
-        gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        if not gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is not set. Please populate it in the .env file.")
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        if not groq_api_key:
+            raise ValueError("GROQ_API_KEY is not set. Please populate it in the .env file.")
 
-        gemini_model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+        # Using Llama 3.1 70B for best RAG quality, or Mixtral for speed
+        groq_model_name = os.getenv("GROQ_MODEL_NAME", "llama-3.1-70b-versatile")
         embedding_model_name = os.getenv(
             "EMBEDDING_MODEL_NAME", "BAAI/bge-m3"
         )
@@ -94,8 +95,8 @@ class AppConfig:
             chunk_overlap=chunk_overlap,
             chunk_size_ar=chunk_size_ar,
             chunk_overlap_ar=chunk_overlap_ar,
-            gemini_api_key=gemini_api_key,
-            gemini_model_name=gemini_model_name,
+            groq_api_key=groq_api_key,
+            groq_model_name=groq_model_name,
             embedding_model_name=embedding_model_name,
             embedding_model_path=embedding_model_path,
             embedding_cache_dir=embedding_cache_dir,
