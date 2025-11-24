@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}{{ ui.brand }}{% endblock %}
+
+{% block content %}
+<header class="hero" dir="{{ text_direction }}">
+  <div class="hero-inner">
+    <div class="hero-top">
+      <div class="hero-branding" dir="{{ text_direction }}">
+        <span class="hero-logo">{{ ui.brand }}</span>
+        <p class="hero-tagline">{{ ui.tagline }}</p>
+      </div>
+    </div>
+    <form class="search-form" action="{{ url_for('web.index') }}" method="get">
+      <div class="search-input-container">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/>
+        </svg>
+        <input
+          type="text"
+          name="q"
+          id="searchInput"
+          value="{{ query }}"
+          placeholder="{{ ui.search_placeholder }}"
+          aria-label="Ask a question about your documents"
+          autocomplete="off"
+        />
+        <button type="button" class="clear-button" id="clearBtn" hidden aria-label="Clear search">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
+          </svg>
+        </button>
+        <button type="button" class="voice-button" id="voiceBtn" aria-label="Start voice search" data-state="idle">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" fill="#4285f4"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" fill="#4285f4"/>
+          </svg>
+        </button>
+        <button type="button" class="upload-inline-button" id="uploadBtn" aria-label="Upload PDF">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M7.5 12.75L16 4.25a2.5 2.5 0 1 1 3.54 3.54l-9.19 9.19a3.5 3.5 0 0 1-4.95-4.95l8.13-8.12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button type="submit" class="search-btn-inside">{{ ui.search_button }}</button>
+      </div>
+    </form>
+  </div>
+</header>
+
+<!-- Upload Modal -->
+<div class="upload-modal" id="uploadModal" hidden>
+  <div class="upload-modal-backdrop" id="uploadBackdrop"></div>
+  <div class="upload-modal-content">
+    <div class="upload-modal-header">
+      <h2>Upload PDF Document</h2>
+      <button class="upload-modal-close" id="closeModal" type="button" aria-label="Close">&times;</button>
+    </div>
+
+    <form class="upload-form" id="uploadForm" enctype="multipart/form-data">
+      <div class="upload-dropzone" id="dropzone">
+        <svg class="upload-dropzone-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/>
+        </svg>
+        <p class="upload-dropzone-text">Drag and drop PDF or audio here or</p>
+        <button class="upload-browse-btn" type="button" id="browseBtn">Browse files</button>
+        <input type="file" id="fileInput" accept=".pdf,application/pdf,.mp3,.wav,.m4a,.mp4,.flac,audio/*" hidden />
+      </div>
+
+      <div class="upload-file-info" id="fileInfo" hidden>
+        <div class="upload-file-name" id="fileName"></div>
+        <button class="upload-file-remove" id="removeFile" type="button" aria-label="Remove file">&times;</button>
+      </div>
+
+      <div class="upload-language-select">
+        <label for="languageSelect">Language:</label>
+        <select id="languageSelect" name="language">
+          <option value="auto">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="ar">Arabic</option>
+        </select>
+      </div>
+
+      <div class="upload-progress" id="uploadProgress" hidden>
+        <div class="upload-progress-bar" id="progressBar"></div>
+        <p class="upload-progress-text" id="progressText">Processing...</p>
+      </div>
+
+      <div class="upload-actions">
+        <button type="button" class="upload-cancel-btn" id="cancelBtn">Cancel</button>
+        <button type="submit" class="upload-submit-btn" id="submitBtn" disabled>Upload</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast" hidden>
+  <span class="toast-message" id="toastMessage"></span>
+</div>
+
+<div class="content-container">
+  {% if error_message %}
+    <div class="error" dir="{{ text_direction }}">{{ error_message }}</div>
+  {% endif %}
+
+  {% if answer %}
+    <section class="answer-box">
+      <h2 class="ai-summary-heading" dir="{{ text_direction }}">{{ ui.ai_summary }}</h2>
+      <p class="answer-text" dir="{{ text_direction }}">{{ answer }}</p>
+    </section>
+  {% endif %}
+
+  {% if cards %}
+    <section class="cards">
+      {% for card in cards %}
+        <article class="card" dir="{{ card.card_direction }}">
+          <div class="card-header" dir="{{ card.card_direction }}">
+            <span class="doc-icon">📄</span>
+            <span class="filename">{{ card.filename }}</span>
+            <span class="doc-type-badge">{{ card.doc_type }}</span>
+          </div>
+
+          <h3 class="result-title" dir="{{ card.card_direction }}">
+            <a href="{{ card.title_link }}" target="_blank" rel="noopener">
+              {{ card.title }}
+            </a>
+          </h3>
+
+          <div class="card-meta" dir="{{ card.card_direction }}">
+            <span class="language-badge">{{ card.language }}</span>
+            <span class="page-info">{{ card.page_label }}</span>
+          </div>
+
+          {% if card.snippet %}
+            <div class="card-snippet" dir="{{ card.card_direction }}">
+              <span class="snippet-label">{{ card.snippet_label }}:</span>
+              <span class="snippet-text">{{ card.snippet }}</span>
+            </div>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </section>
+  {% elif query and not answer %}
+    <div class="error" dir="{{ text_direction }}">{{ no_results_message }}</div>
+  {% endif %}
+</div>
+{% endblock %}
