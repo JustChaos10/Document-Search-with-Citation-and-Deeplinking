@@ -1,4 +1,22 @@
 document.addEventListener("DOMContentLoaded", () => {
+  // ===== Dark Mode Toggle =====
+  const themeToggle = document.getElementById("themeToggle");
+  const htmlElement = document.documentElement;
+
+  // Check for saved theme preference or default to light mode
+  const currentTheme = localStorage.getItem("theme") || "light";
+  if (currentTheme === "dark") {
+    htmlElement.classList.add("dark-mode");
+  }
+
+  if (themeToggle) {
+    themeToggle.addEventListener("click", () => {
+      htmlElement.classList.toggle("dark-mode");
+      const theme = htmlElement.classList.contains("dark-mode") ? "dark" : "light";
+      localStorage.setItem("theme", theme);
+    });
+  }
+
   const searchInput = document.querySelector("form.search-form input[type='text']");
   const searchForm = document.querySelector("form.search-form");
 
@@ -25,9 +43,14 @@ document.addEventListener("DOMContentLoaded", () => {
   if (searchForm) {
     searchForm.addEventListener("submit", () => {
       const button = searchForm.querySelector("button[type='submit']");
+      const skeletonContainer = document.getElementById("skeletonContainer");
       if (button && searchInput.value.trim()) {
         button.innerHTML = '<span class="spinner"></span>';
         button.disabled = true;
+        // Show skeleton loading screens
+        if (skeletonContainer) {
+          skeletonContainer.hidden = false;
+        }
       }
     });
   }
@@ -484,5 +507,72 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
     });
+  }
+
+  // ===== Filter and Sort Functionality =====
+  const languageFilter = document.getElementById("languageFilter");
+  const docTypeFilter = document.getElementById("docTypeFilter");
+  const sortBy = document.getElementById("sortBy");
+  const resetFilters = document.getElementById("resetFilters");
+  const cardsContainer = document.getElementById("cardsContainer");
+
+  if (languageFilter && docTypeFilter && sortBy && cardsContainer) {
+    const applyFilters = () => {
+      const cards = Array.from(cardsContainer.querySelectorAll(".card"));
+      const languageValue = languageFilter.value;
+      const docTypeValue = docTypeFilter.value;
+      const sortValue = sortBy.value;
+
+      // Filter cards
+      cards.forEach(card => {
+        const cardLanguage = card.getAttribute("data-language");
+        const cardDocType = card.getAttribute("data-doc-type");
+
+        const languageMatch = languageValue === "all" || cardLanguage === languageValue;
+        const docTypeMatch = docTypeValue === "all" || cardDocType === docTypeValue;
+
+        card.hidden = !(languageMatch && docTypeMatch);
+      });
+
+      // Sort visible cards
+      const visibleCards = cards.filter(card => !card.hidden);
+
+      if (sortValue === "type") {
+        visibleCards.sort((a, b) => {
+          const typeA = a.getAttribute("data-doc-type");
+          const typeB = b.getAttribute("data-doc-type");
+          return typeA.localeCompare(typeB);
+        });
+      } else if (sortValue === "language") {
+        visibleCards.sort((a, b) => {
+          const langA = a.getAttribute("data-language");
+          const langB = b.getAttribute("data-language");
+          return langA.localeCompare(langB);
+        });
+      } else {
+        // Sort by original relevance order
+        visibleCards.sort((a, b) => {
+          const indexA = parseInt(a.getAttribute("data-original-index"));
+          const indexB = parseInt(b.getAttribute("data-original-index"));
+          return indexA - indexB;
+        });
+      }
+
+      // Reorder cards in DOM
+      visibleCards.forEach(card => cardsContainer.appendChild(card));
+    };
+
+    languageFilter.addEventListener("change", applyFilters);
+    docTypeFilter.addEventListener("change", applyFilters);
+    sortBy.addEventListener("change", applyFilters);
+
+    if (resetFilters) {
+      resetFilters.addEventListener("click", () => {
+        languageFilter.value = "all";
+        docTypeFilter.value = "all";
+        sortBy.value = "relevance";
+        applyFilters();
+      });
+    }
   }
 });

@@ -184,7 +184,7 @@ def index():
                     query_language = normalized_result_language
             answer = result.answer
             ui_for_cards = _ui_strings(query_language)
-            cards = _build_cards(result.context_map, result.citations, query_language, ui_for_cards)
+            cards = _build_cards(result.context_map, result.citations, query_language, ui_for_cards, query)
         except Exception as exc:  # pragma: no cover - user feedback
             logger.exception("query.failed", extra={"query": query})
             error_message = _ui_strings(query_language)["error_generic"]
@@ -435,7 +435,7 @@ def _resolve_document_path(doc_path: str) -> Path:
     return full_path
  
  
-def _build_cards(context_map, citations, query_language: str, ui_strings: Dict[str, str]):
+def _build_cards(context_map, citations, query_language: str, ui_strings: Dict[str, str], query: str = ""):
     cards = []
     seen_chunks = set()
     for citation in citations:
@@ -451,6 +451,9 @@ def _build_cards(context_map, citations, query_language: str, ui_strings: Dict[s
         download_link = url_for("web.download_document", doc_path=relative_path, lang=query_language)
         action_link = _build_action_link(relative_path, metadata, query_language)
         snippet = _make_card_snippet(doc.page_content)
+        # Highlight query terms in snippet
+        if query:
+            snippet = _highlight_query_terms(snippet, query)
         summary = citation.summary.strip()
         if summary.lower().startswith("this chunk"):
             summary = "This part" + summary[10:]
@@ -486,6 +489,37 @@ def _build_cards(context_map, citations, query_language: str, ui_strings: Dict[s
     return cards
  
  
+def _highlight_query_terms(text: str, query: str) -> str:
+    """
+    Highlight query terms in text using HTML mark tags.
+
+    Args:
+        text: Text to highlight
+        query: Search query
+
+    Returns:
+        Text with query terms wrapped in <mark> tags
+    """
+    if not query or not text:
+        return text
+
+    # Extract query terms (filter out short words)
+    query_terms = [term.strip() for term in query.split() if len(term.strip()) > 2]
+
+    if not query_terms:
+        return text
+
+    # Create pattern to match any query term (case-insensitive)
+    # Escape special regex characters
+    escaped_terms = [re.escape(term) for term in query_terms]
+    pattern = re.compile(r'\b(' + '|'.join(escaped_terms) + r')\b', re.IGNORECASE)
+
+    # Replace matches with highlighted version
+    highlighted = pattern.sub(r'<mark>\1</mark>', text)
+
+    return highlighted
+
+
 def _make_card_snippet(text: str) -> str:
     if not text:
         return ""

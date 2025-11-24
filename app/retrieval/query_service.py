@@ -17,6 +17,9 @@ from app.retrieval.vector_store import VectorStoreManager
 from app.nlp import detect_language
 from app.retrieval.keyword_store import KeywordIndex
 from app.retrieval.reranker import CrossEncoderReranker, RerankedDocument
+from app.retrieval.context_compressor import ContextualCompressor
+from app.retrieval.conversation_memory import ConversationMemory
+from app.retrieval.answer_verifier import AnswerVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,8 @@ class QueryResult:
     citations: List[CitationResult]
     context_map: dict[str, Document]
     language: str
+    confidence_score: float = 0.0
+    confidence_status: str = "unverified"
 
 
 class QueryService:
@@ -50,16 +55,22 @@ class QueryService:
         self.reranker = reranker
         self.chat_model = chat_model or build_chat_model(config)
         self.max_retries = 3
+        self.compressor = ContextualCompressor(max_chars_per_doc=600)
+        self.conversation_memory = ConversationMemory(max_turns=3, max_age_minutes=30)
+        self.answer_verifier = AnswerVerifier(min_confidence_threshold=0.5)
 
     def query(self, question: str, top_k: int = 6) -> QueryResult:
         if not question.strip():
             raise ValueError("Question cannot be empty.")
 
+        # Expand query with conversation context for follow-up questions
+        expanded_question = self.conversation_memory.expand_query_with_context(question)
+
         search_k = max(top_k * 3, top_k)
-        query_language = (detect_language(question) or "en").lower()
+        query_language = (detect_language(expanded_question) or "en").lower()
         if query_language not in {"en", "ar"}:
             query_language = "en"
-        expanded_queries = self._expand_queries(question)
+        expanded_queries = self._expand_queries(expanded_question)
         search_variants = self._build_search_variants(expanded_queries, query_language)
         raw_documents: List[Document] = []
         for expanded_query, _lang in search_variants:
@@ -89,6 +100,10 @@ class QueryService:
             documents = [item.document for item in reranked_items][:top_k]
         else:
             documents = documents[:top_k]
+
+        # Apply contextual compression to reduce token usage and improve relevance
+        documents = self.compressor.compress_documents(question, documents)
+
         context_map = self._build_context_map(documents)
         if not documents or not context_map:
             logger.info("query.no_results", extra={"question": question})
@@ -197,11 +212,27 @@ class QueryService:
         citations_payload = payload.get("citations", [])
         citations = self._parse_citations(citations_payload)
 
+        # Verify answer and compute confidence score
+        confidence_score, confidence_status = self.answer_verifier.verify_answer(
+            answer=answer,
+            question=question,
+            sources=documents
+        )
+
+        # Add this turn to conversation memory
+        self.conversation_memory.add_turn(
+            question=question,
+            answer=answer,
+            language=query_language
+        )
+
         return QueryResult(
             answer=answer,
             citations=citations,
             context_map=context_map,
             language=query_language,
+            confidence_score=confidence_score,
+            confidence_status=confidence_status
         )
 
     def _build_prompt(
@@ -241,6 +272,12 @@ class QueryService:
             context_lines.append(doc.page_content)
             context_blocks.append("\n".join(context_lines) + "\n")
 
+        # Add conversation context if available
+        conversation_context = self.conversation_memory.get_context(query_language)
+        conversation_prefix = ""
+        if conversation_context:
+            conversation_prefix = f"{conversation_context}\n\n---\n\n"
+
         instructions = (
             "You are an assistant that answers strictly using the supplied document contexts.\n\n"
             "Adopt a neutral professional tone suitable for all audiences.\n\n"
@@ -270,6 +307,7 @@ class QueryService:
         )
 
         prompt = (
+            f"{conversation_prefix}"
             f"{instructions}\n"
             f"Question: {question}\n"
             f"{'-'*60}\n"

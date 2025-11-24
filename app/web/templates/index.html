@@ -10,6 +10,12 @@
         <span class="hero-logo">{{ ui.brand }}</span>
         <p class="hero-tagline">{{ ui.tagline }}</p>
       </div>
+      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+        <svg class="theme-icon" viewBox="0 0 24 24" width="24" height="24">
+          <path class="sun-icon" d="M12 18a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 110-8 4 4 0 010 8zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.93zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.414-2.121-2.121zm2.121-14.85l1.414 1.415-2.121 2.121-1.414-1.414 2.121-2.121zM5.636 16.95l1.414 1.414-2.121 2.121-1.414-1.414 2.121-2.121zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z" fill="currentColor"/>
+          <path class="moon-icon" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" fill="currentColor"/>
+        </svg>
+      </button>
     </div>
     <form class="search-form" action="{{ url_for('web.index') }}" method="get">
       <div class="search-input-container">
@@ -99,6 +105,47 @@
 </div>
 
 <div class="content-container">
+  <!-- Skeleton loading state (hidden by default, shown via JS during loading) -->
+  <div id="skeletonContainer" class="skeleton-container" hidden>
+    <div class="skeleton-card">
+      <div class="skeleton-body">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-text long"></div>
+        <div class="skeleton-text medium"></div>
+      </div>
+    </div>
+    <div class="skeleton-card">
+      <div class="skeleton-header">
+        <div class="skeleton-icon"></div>
+        <div class="skeleton-text medium"></div>
+      </div>
+      <div class="skeleton-body">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-meta">
+          <div class="skeleton-badge"></div>
+          <div class="skeleton-badge"></div>
+        </div>
+        <div class="skeleton-snippet"></div>
+        <div class="skeleton-snippet"></div>
+      </div>
+    </div>
+    <div class="skeleton-card">
+      <div class="skeleton-header">
+        <div class="skeleton-icon"></div>
+        <div class="skeleton-text short"></div>
+      </div>
+      <div class="skeleton-body">
+        <div class="skeleton-title"></div>
+        <div class="skeleton-meta">
+          <div class="skeleton-badge"></div>
+          <div class="skeleton-badge"></div>
+        </div>
+        <div class="skeleton-snippet"></div>
+        <div class="skeleton-snippet"></div>
+      </div>
+    </div>
+  </div>
+
   {% if error_message %}
     <div class="error" dir="{{ text_direction }}">{{ error_message }}</div>
   {% endif %}
@@ -111,9 +158,42 @@
   {% endif %}
 
   {% if cards %}
-    <section class="cards">
+    <!-- Filter Controls -->
+    <div class="filter-controls" id="filterControls">
+      <div class="filter-group">
+        <label for="languageFilter">Language:</label>
+        <select id="languageFilter">
+          <option value="all">All</option>
+          <option value="EN">English</option>
+          <option value="AR">Arabic</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="docTypeFilter">Type:</label>
+        <select id="docTypeFilter">
+          <option value="all">All Types</option>
+          <option value="PDF">PDF</option>
+          <option value="HTML">HTML</option>
+          <option value="AUDIO">Audio</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="sortBy">Sort:</label>
+        <select id="sortBy">
+          <option value="relevance">Most Relevant</option>
+          <option value="type">Document Type</option>
+          <option value="language">Language</option>
+        </select>
+      </div>
+      <button type="button" class="filter-reset" id="resetFilters">Reset</button>
+    </div>
+
+    <section class="cards" id="cardsContainer">
       {% for card in cards %}
-        <article class="card" dir="{{ card.card_direction }}">
+        <article class="card" dir="{{ card.card_direction }}"
+                 data-language="{{ card.language }}"
+                 data-doc-type="{{ card.doc_type }}"
+                 data-original-index="{{ loop.index0 }}">
           <div class="card-header" dir="{{ card.card_direction }}">
             <span class="doc-icon">📄</span>
             <span class="filename">{{ card.filename }}</span>
@@ -134,7 +214,7 @@
           {% if card.snippet %}
             <div class="card-snippet" dir="{{ card.card_direction }}">
               <span class="snippet-label">{{ card.snippet_label }}:</span>
-              <span class="snippet-text">{{ card.snippet }}</span>
+              <span class="snippet-text">{{ card.snippet | safe }}</span>
             </div>
           {% endif %}
         </article>
